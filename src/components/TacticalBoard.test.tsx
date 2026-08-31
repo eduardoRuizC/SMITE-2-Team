@@ -1,9 +1,15 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TacticalBoard } from './TacticalBoard'
 
+const exportMocks = vi.hoisted(() => ({ png: vi.fn<(state: unknown, area?: unknown) => Promise<void>>(() => Promise.resolve()), json: vi.fn() }))
+vi.mock('../exportBoard', async importOriginal => {
+  const original = await importOriginal<typeof import('../exportBoard')>()
+  return { ...original, exportBoardPng: exportMocks.png, exportBoardJson: exportMocks.json }
+})
+
 describe('flujo principal de la pizarra', () => {
-  beforeEach(() => localStorage.clear())
+  beforeEach(() => { localStorage.clear(); exportMocks.png.mockClear(); exportMocks.json.mockClear() })
 
   it('muestra diez fichas y permite asignar un dios, cambiar mapa y crear un marcador', () => {
     render(<TacticalBoard />)
@@ -59,5 +65,33 @@ describe('flujo principal de la pizarra', () => {
 
     fireEvent.click(within(controls).getByRole('button', { name: 'Salir de pantalla completa' }))
     expect(screen.queryByRole('toolbar', { name: 'Menús de pantalla completa' })).toBeNull()
+  })
+
+  it('mantiene visible el color seleccionado en la paleta de dibujo', () => {
+    render(<TacticalBoard />)
+    const yellow = screen.getByRole('button', { name: 'Color #ffc93d' }) as HTMLButtonElement
+
+    fireEvent.click(yellow)
+
+    expect(yellow.getAttribute('aria-pressed')).toBe('true')
+    expect(yellow.style.backgroundColor).toBe('rgb(255, 201, 61)')
+  })
+
+  it('pregunta qué área exportar cuando el mapa tiene zoom', () => {
+    render(<TacticalBoard />)
+    fireEvent.click(screen.getByRole('button', { name: 'Acercar mapa' }))
+    fireEvent.click(screen.getByText('Imagen PNG'))
+
+    expect(screen.getByRole('dialog', { name: '¿Qué parte del mapa quieres exportar?' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Todo el mapa/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Solo lo visible/ })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    expect(screen.queryByRole('dialog', { name: '¿Qué parte del mapa quieres exportar?' })).toBeNull()
+
+    fireEvent.click(screen.getByText('Imagen PNG'))
+    fireEvent.click(screen.getByRole('button', { name: /Solo lo visible/ }))
+    expect(exportMocks.png).toHaveBeenCalledOnce()
+    expect(exportMocks.png.mock.calls[0][1]).toEqual({ x: 0, y: 0, width: .8, height: .8 })
   })
 })

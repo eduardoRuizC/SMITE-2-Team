@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LANDMARKS, MAPS, MARKER_TYPES, getLandmarkPoint, initialBoardState } from '../data'
-import { exportBoardJson, exportBoardPng } from '../exportBoard'
+import { exportBoardJson, exportBoardPng, type ExportArea } from '../exportBoard'
 import type { BoardState, MarkerState, PlayerTokenState, Stroke, ToolMode } from '../types'
 import { clamp, eventToNormalized, isValidBoardState, loadState, makeId, pushHistory, redoHistory, saveState, undoHistory, type History } from '../utils'
 import { BoardCanvas } from './BoardCanvas'
@@ -9,6 +9,7 @@ import { ExportControls } from './ExportControls'
 import { FocusControls, type FocusMenus } from './FocusControls'
 import { GodSelector } from './GodSelector'
 import { Icon } from './Icon'
+import { ImageExportDialog } from './ImageExportDialog'
 import { MapSelector } from './MapSelector'
 import { MarkerEditor } from './MarkerEditor'
 import { MarkerPalette } from './MarkerPalette'
@@ -23,6 +24,7 @@ export function TacticalBoard() {
   const [selectedMarker, setSelectedMarker] = useState<string>()
   const [notice, setNotice] = useState('')
   const [focusMode, setFocusMode] = useState(false)
+  const [showImageExport, setShowImageExport] = useState(false)
   const [focusMenus, setFocusMenus] = useState<FocusMenus>({ ally: false, enemy: false, markers: false, drawing: false })
   const appRef = useRef<HTMLDivElement>(null)
   const boardRef = useRef<HTMLDivElement>(null)
@@ -71,9 +73,28 @@ export function TacticalBoard() {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => undefined)
   }
   const toggleFocusMenu = (menu: keyof FocusMenus) => setFocusMenus(current => ({ ...current, [menu]: !current[menu] }))
+  const visibleExportArea = (): ExportArea => {
+    const board = boardRef.current
+    const viewport = board?.parentElement
+    if (!board || !viewport) return { x: 0, y: 0, width: 1 / state.zoom, height: 1 / state.zoom }
+    const width = Math.min(1, viewport.clientWidth / board.offsetWidth) || 1 / state.zoom
+    const height = Math.min(1, viewport.clientHeight / board.offsetHeight) || 1 / state.zoom
+    return {
+      x: clamp(viewport.scrollLeft / board.offsetWidth, 0, 1 - width) || 0,
+      y: clamp(viewport.scrollTop / board.offsetHeight, 0, 1 - height) || 0,
+      width,
+      height,
+    }
+  }
+  const runPngExport = (scope: 'full' | 'visible' = 'full') => {
+    setShowImageExport(false)
+    const area = scope === 'visible' ? visibleExportArea() : undefined
+    exportBoardPng(state, area).then(()=>flash('PNG exportado')).catch(()=>window.alert('No se pudo exportar el PNG.'))
+  }
+  const requestPngExport = () => state.zoom > 1 ? setShowImageExport(true) : runPngExport()
 
   return <div className={`app-shell ${focusMode?'board-focus':''}`} ref={appRef}>
-    <header className="topbar"><div className="brand"><div className="brand-rune">Ⅱ</div><div><p>SMITE 2</p><strong>TACTICAL BOARD</strong></div></div><div className="strategy-title"><span>Nombre de la táctica</span><input value={state.tacticName} onChange={e=>preview(s=>({...s,tacticName:e.target.value}))} onBlur={()=>saveState(state)} aria-label="Nombre de la táctica"/></div><MapSelector value={state.mapId} onChange={mapId=>commit(s=>({...s,mapId}))}/><ExportControls state={state} onSave={()=>{saveState(state);flash('Guardado en este dispositivo')}} onExportPng={()=>exportBoardPng(state).then(()=>flash('PNG exportado')).catch(()=>window.alert('No se pudo exportar el PNG.'))} onExportJson={()=>exportBoardJson(state)} onImport={importJson} onReset={reset} canUndo={!!history.past.length} canRedo={!!history.future.length} onUndo={undo} onRedo={redo}/><Tooltip text="Mapa a pantalla completa"><button className="top-fullscreen-button" onClick={enterFocus} aria-label="Abrir mapa a pantalla completa"><Icon name="expand"/></button></Tooltip></header>
+    <header className="topbar"><div className="brand"><div className="brand-rune">Ⅱ</div><div><p>SMITE 2</p><strong>TACTICAL BOARD</strong></div></div><div className="strategy-title"><span>Nombre de la táctica</span><input value={state.tacticName} onChange={e=>preview(s=>({...s,tacticName:e.target.value}))} onBlur={()=>saveState(state)} aria-label="Nombre de la táctica"/></div><MapSelector value={state.mapId} onChange={mapId=>commit(s=>({...s,mapId}))}/><ExportControls state={state} onSave={()=>{saveState(state);flash('Guardado en este dispositivo')}} onExportPng={requestPngExport} onExportJson={()=>exportBoardJson(state)} onImport={importJson} onReset={reset} canUndo={!!history.past.length} canRedo={!!history.future.length} onUndo={undo} onRedo={redo}/><Tooltip text="Mapa a pantalla completa"><button className="top-fullscreen-button" onClick={enterFocus} aria-label="Abrir mapa a pantalla completa"><Icon name="expand"/></button></Tooltip></header>
     <main className="workspace"><div className="left-column"><TeamPanel team="ally" tokens={state.tokens.filter(t=>t.team==='ally')} onSelect={setGodToken} onResizeTeam={size=>commit(s=>({...s,tokens:s.tokens.map(token=>token.team==='ally'?{...token,size}:token)}))}/><div className="field-note ally"><span>01</span><p><strong>Plan de apertura</strong>Arrastra las fichas al mapa y traza la primera rotación.</p></div></div>
       <section className="board-column"><div className="board-meta"><div><span className="live-pill"><i/> SESIÓN LOCAL</span><span>{state.tokens.filter(t=>t.god).length}/10 dioses asignados</span></div><span>{MAPS.find(m=>m.id===state.mapId)?.label}</span></div><BoardCanvas ref={boardRef} state={state} mode={mode} selectedMarker={selectedMarker} onZoom={zoom=>commit(s=>({...s,zoom}))} onTokenOpen={setGodToken} onMoveStart={beginMove} onMove={move} onMoveEnd={endMove} onKeyboardMove={keyboardMove} onMarkerSelect={setSelectedMarker} onAddMarker={addMarker} onAddStroke={(stroke:Stroke)=>commit(s=>({...s,strokes:[...s.strokes,stroke]}))} onEraseStroke={id=>commit(s=>({...s,strokes:s.strokes.filter(v=>v.id!==id)}))}/></section>
       <div className="right-column"><TeamPanel team="enemy" tokens={state.tokens.filter(t=>t.team==='enemy')} onSelect={setGodToken} onResizeTeam={size=>commit(s=>({...s,tokens:s.tokens.map(token=>token.team==='enemy'?{...token,size}:token)}))}/><MarkerPalette onAdd={addMarker}/></div></main>
@@ -83,7 +104,8 @@ export function TacticalBoard() {
       {(focusMenus.enemy||focusMenus.markers)&&<aside className="focus-panel-stack right" aria-label="Menús enemigos y marcadores">{focusMenus.enemy&&<TeamPanel team="enemy" tokens={state.tokens.filter(t=>t.team==='enemy')} onSelect={setGodToken} onResizeTeam={size=>commit(s=>({...s,tokens:s.tokens.map(token=>token.team==='enemy'?{...token,size}:token)}))}/>} {focusMenus.markers&&<MarkerPalette onAdd={type=>{addMarker(type);setFocusMenus(current=>({...current,markers:false}))}}/>}</aside>}
     </>}
     {marker&&<MarkerEditor marker={marker} onChange={patch=>updateMarker(marker.id,patch)} onPlace={landmarkId=>{const place=LANDMARKS.find(item=>item.id===landmarkId);if(place){const point=getLandmarkPoint(place,state.mapId);updateMarker(marker.id,{...point,landmarkId,label:marker.label||place.label})}}} onDuplicate={()=>{const copy={...marker,id:makeId(),x:clamp(marker.x+.04),y:clamp(marker.y+.04),landmarkId:undefined};commit(s=>({...s,markers:[...s.markers,copy]}));setSelectedMarker(copy.id)}} onDelete={()=>{commit(s=>({...s,markers:s.markers.filter(m=>m.id!==marker.id)}));setSelectedMarker(undefined)}} onClose={()=>setSelectedMarker(undefined)}/>} 
-    {godToken&&<GodSelector token={state.tokens.find(t=>t.id===godToken.id)??godToken} onSelect={god=>commit(s=>({...s,tokens:s.tokens.map(t=>t.id===godToken.id?{...t,god}:t)}))} onResize={size=>commit(s=>({...s,tokens:s.tokens.map(t=>t.id===godToken.id?{...t,size}:t)}))} onClose={()=>setGodToken(undefined)}/>} 
+    {godToken&&<GodSelector token={state.tokens.find(t=>t.id===godToken.id)??godToken} onSelect={god=>commit(s=>({...s,tokens:s.tokens.map(t=>t.id===godToken.id?{...t,god}:t)}))} onResize={size=>commit(s=>({...s,tokens:s.tokens.map(t=>t.id===godToken.id?{...t,size}:t)}))} onClose={()=>setGodToken(undefined)}/>}
+    {showImageExport&&<ImageExportDialog onChoose={runPngExport} onClose={()=>setShowImageExport(false)}/>}
     <div className={`toast ${notice?'visible':''}`} role="status" aria-live="polite">{notice}</div>
   </div>
 }

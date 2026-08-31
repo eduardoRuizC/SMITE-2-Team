@@ -4,9 +4,12 @@ import { downloadBlob } from './utils'
 
 const loadImage = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => { const image = new Image(); image.onload=()=>resolve(image); image.onerror=reject; image.src=src })
 const safeName = (name: string) => name.trim().replace(/[^\p{L}\p{N}-]+/gu, '-').replace(/^-|-$/g, '') || 'tactica'
-export async function exportBoardPng(state: BoardState) {
+export interface ExportArea { x: number; y: number; width: number; height: number }
+
+export async function exportBoardPng(state: BoardState, area: ExportArea = { x: 0, y: 0, width: 1, height: 1 }) {
   const size = 1600, canvas = document.createElement('canvas'); canvas.width=size; canvas.height=size
   const ctx = canvas.getContext('2d')!
+  ctx.save(); ctx.scale(1/area.width,1/area.height); ctx.translate(-area.x*size,-area.y*size)
   const map = MAPS.find(m => m.id === state.mapId) ?? MAPS[0]
   const mapImage = await loadImage(map.src); ctx.drawImage(mapImage,0,0,size,size)
   const gradient=ctx.createLinearGradient(0,size,size,0); gradient.addColorStop(0,'rgba(14,112,185,.18)'); gradient.addColorStop(.45,'transparent'); gradient.addColorStop(.55,'transparent'); gradient.addColorStop(1,'rgba(190,55,34,.18)'); ctx.fillStyle=gradient;ctx.fillRect(0,0,size,size)
@@ -25,6 +28,7 @@ export async function exportBoardPng(state: BoardState) {
     }
     if(marker.label){ctx.font='bold 19px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';const w=ctx.measureText(marker.label).width+22;ctx.fillStyle='rgba(6,12,18,.9)';ctx.fillRect(x-w/2,y+r+8,w,30);ctx.fillStyle='#fff';ctx.fillText(marker.label,x,y+r+24)}
   }
+  ctx.restore()
   ctx.fillStyle='rgba(4,9,14,.88)';ctx.fillRect(0,0,size,62);ctx.fillStyle='#d9bb73';ctx.textAlign='left';ctx.textBaseline='middle';ctx.font='700 27px sans-serif';ctx.fillText(state.tacticName,28,31);ctx.fillStyle='#c6d1d8';ctx.textAlign='right';ctx.font='18px sans-serif';ctx.fillText('SMITE 2 TACTICAL BOARD',size-28,31)
   const blob=await new Promise<Blob>((resolve,reject)=>canvas.toBlob(value=>value?resolve(value):reject(new Error('No se pudo generar el PNG')),'image/png'))
   downloadBlob(blob,`${safeName(state.tacticName)}.png`)
